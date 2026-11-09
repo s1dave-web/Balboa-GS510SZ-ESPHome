@@ -168,8 +168,10 @@ Time to Heat.
 - Celsius displays only.
 - Filter schedule assumes the 6 min / 12 h rule from the StrongSpa manual; it is unknown whether changing
   the filter setting restarts the controller's cycle clock.
-- Tubs are often at the edge of Wi-Fi range. The example delays the fallback hotspot to 10 minutes; AP mode
-  plus scanning while reconnecting crashed the ESP8266 here.
+- Tubs are often at the edge of Wi-Fi range (about -77 dBm here, inside the cabinet). A fixed IP
+  (`manual_ip`, commented in the example) cut reconnects from minutes to seconds; the fallback hotspot is
+  delayed to 10 minutes because AP mode plus scanning while reconnecting crashed the ESP8266. Better still:
+  mount the ESP outside the cabinet, or use a D1 mini Pro with an external antenna.
 
 ## Credits
 

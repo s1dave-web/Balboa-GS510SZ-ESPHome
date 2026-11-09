@@ -76,6 +76,13 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   power_save_mode: none        # same as WIFI_NONE_SLEEP in the Arduino sketch
+  # Recommended at the edge of Wi-Fi range: a fixed address skips the DHCP handshake on every reconnect
+  # (here it cut reconnects from minutes to ~16 s). Reserve the address in your router too.
+  # manual_ip:
+  #   static_ip: 192.168.1.95
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  #   dns1: 192.168.1.1
   # Tubs are often at the edge of Wi-Fi range, so reconnecting can take minutes. Start the fallback
   # hotspot only after 10 min: AP + scanning while reconnecting crashed the ESP8266 here.
   ap:
