@@ -36,6 +36,8 @@ static const uint8_t MODE_MAX_ATTEMPTS = 3;
 // Pump speed: the pump button cycles Off -> Low -> High -> Off; the panel only reports on/off.
 static const uint32_t PUMP_PRESS_GAP_MS = 1000;
 static const uint32_t PUMP_SETTLE_MS = 2500;
+static const uint32_t PUMP2_PRESS_GAP_MS = 2500;  // EXPERIMENTAL: time for the panel to report pump 2
+static const uint8_t PUMP2_MAX_PRESSES = 3;
 static const uint32_t FILTER_PRESS_GAP_MS = 1000;   // Temp+ -> Pump 1, same gap as the mode change
 static const uint32_t FILTER_SET_SHOW_MS = 3000;    // Temp+ must bring up the flashing set temperature within this
 static const uint32_t FILTER_OBSERVE_MS = 6000;     // after Pump 1, wait this long for an F setting
@@ -259,6 +261,7 @@ void BalboaGS::loop() {
   this->process_mode_change_();
   this->process_filter_read_();
   this->process_pump_();
+  this->process_pump2_();
   this->process_temp_presses_();
   this->learn_target_();
   this->publish_states_();
@@ -285,6 +288,8 @@ void BalboaGS::decode_frame_() {
   this->heater_on_ = buffer_[35] == 1;
   this->pump1_on_ = buffer_[36] == 1;
   if (this->pump1_on_) this->last_pump_on_ms_ = millis();
+  this->pump2_on_ = buffer_[37] == 1;
+  if (this->pump2_on_) this->last_pump2_on_ms_ = millis();
   this->light_on_ = buffer_[38] == 1;
 
   // Raw status bits 29..38, for working out the undocumented ones (mode, pump speed)
@@ -352,6 +357,8 @@ void BalboaGS::command_button(uint8_t action) {
     case ACTION_LIGHT: this->queue_press_(BTN_LIGHT); this->log_action_("Light pressed"); break;
     case ACTION_PUMP: this->queue_press_(BTN_PUMP1); this->log_action_("Pump pressed"); break;
     case ACTION_READ_FILTER: this->command_read_filter(false); break;
+    case ACTION_PUMP2: this->queue_press_(BTN_PUMP2); this->log_action_("Pump 2 pressed (experimental)"); break;
+    case ACTION_PUMP3: this->queue_press_(BTN_PUMP3); this->log_action_("Pump 3 pressed (experimental)"); break;
     case ACTION_TEST_FILTER: this->command_read_filter(true); break;
     case ACTION_STOP:
       this->stop_interface_();
@@ -1001,6 +1008,8 @@ void BalboaGS::on_power_(float watts) {
   }
   // Leave our own presses alone while they settle
   if (this->pump_target_ >= 0 || !elapsed_(this->pump_settle_until_)) return;
+  // The power bands assume one pump: with a second pump configured they overlap, so don't correct
+  if (this->pump2_configured()) return;
   if (this->power_agree_count_ >= 2 && (PumpSpeed) speed != this->pump_assumed_) {
     this->log_action_("Pump is %s (power %.0f W, was tracked as %s)", pump_name((PumpSpeed) speed), watts,
                       pump_name(this->pump_assumed_));
@@ -1086,6 +1095,15 @@ void BalboaGS::publish_states_() {
   }
   pub_bool(this->heater_sensor_, this->lp_heater_, this->heater_on_);
   pub_bool(this->pump_sensor_, this->lp_pump_, this->pump1_on_);
+  pub_bool(this->pump2_sensor_, this->lp_pump2_, this->pump2_is_on_());
+  // Keep the Pump 2 switch matching the panel (panel button, or a press that didn't take)
+  if (this->pump2_switch_ != nullptr && this->pump2_target_ < 0 && elapsed_(this->pump2_next_press_ms_)) {
+    const bool on = this->pump2_is_on_();
+    if ((int8_t) on != this->lp_pump2_switch_) {
+      this->pump2_switch_->publish_state(on);
+      this->lp_pump2_switch_ = (int8_t) on;
+    }
+  }
   pub_bool(this->lights_sensor_, this->lp_light_, this->light_on_);
 
   // Hold back the target while we are stepping it, so HA does not see 37.5 -> 38 -> 38.5
@@ -1155,6 +1173,51 @@ void BalboaModeSelect::control(const std::string &value) {
   this->parent_->command_mode(target);
   this->publish_state(value);  // optimistic; the real mode is re-published when the change finishes
 }
+
+// ---------------------------------------------------------------------------------------------
+// Pump 2 (EXPERIMENTAL, untested): press Pump 2 until bit 37 matches, at most 3 presses
+// ---------------------------------------------------------------------------------------------
+void BalboaGS::command_pump2(bool on) {
+  if (this->interface_stopped_) {
+    this->log_action_("Pump 2 -> %s ignored: interface stopped", on ? "on" : "off");
+    return;
+  }
+  if (this->pump2_target_ < 0 && on == this->pump2_is_on_()) {
+    this->log_action_("Pump 2 -> %s (already %s, no press)", on ? "on" : "off", on ? "on" : "off");
+    this->lp_pump2_switch_ = -1;
+    return;
+  }
+  this->pump2_target_ = on ? 1 : 0;
+  this->pump2_presses_ = 0;
+  this->pump2_next_press_ms_ = 0;
+  this->log_action_("Pump 2 -> %s requested (experimental)", on ? "on" : "off");
+}
+
+void BalboaGS::process_pump2_() {
+  if (this->pump2_target_ < 0) return;
+  if (this->mode_change_active_() || this->filter_read_active_() || this->pump_target_ >= 0) return;
+  if (!elapsed_(this->pump2_next_press_ms_) || this->any_press_pending_()) return;
+
+  if (this->pump2_is_on_() == (this->pump2_target_ == 1)) {
+    this->log_action_("Pump 2 -> %s done (%u presses)", this->pump2_target_ ? "on" : "off",
+                      (unsigned) this->pump2_presses_);
+    this->pump2_target_ = -1;
+    this->lp_pump2_switch_ = -1;  // re-publish the real state
+    return;
+  }
+  if (this->pump2_presses_ >= PUMP2_MAX_PRESSES) {
+    this->log_action_("Pump 2 -> %s gave up after %u presses: bit 37 didn't follow (check status_bits)",
+                      this->pump2_target_ ? "on" : "off", (unsigned) this->pump2_presses_);
+    this->pump2_target_ = -1;
+    this->lp_pump2_switch_ = -1;
+    return;
+  }
+  this->queue_press_(BTN_PUMP2);
+  this->pump2_presses_++;
+  this->pump2_next_press_ms_ = millis() + PUMP2_PRESS_GAP_MS;
+}
+
+void BalboaPump2Switch::write_state(bool state) { this->parent_->command_pump2(state); }
 
 void BalboaFilterSelect::control(const std::string &value) {
   int hours = -1;

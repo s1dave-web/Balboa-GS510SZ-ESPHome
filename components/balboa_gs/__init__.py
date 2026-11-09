@@ -6,7 +6,7 @@ Based on https://github.com/MagnusPer/Balboa-GS510SZ (protocol decoding and butt
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import binary_sensor, button, climate, light, select, sensor, text_sensor
+from esphome.components import binary_sensor, button, climate, light, select, sensor, switch, text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_OUTPUT_ID,
@@ -20,7 +20,7 @@ from esphome.const import (
 )
 
 CODEOWNERS = []
-AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "button", "climate", "light", "select"]
+AUTO_LOAD = ["sensor", "binary_sensor", "text_sensor", "button", "climate", "light", "select", "switch"]
 
 balboa_ns = cg.esphome_ns.namespace("balboa_gs")
 BalboaGS = balboa_ns.class_("BalboaGS", cg.Component)
@@ -42,6 +42,10 @@ BalboaFilterSelect = balboa_ns.class_(
     "BalboaFilterSelect", select.Select, cg.Parented.template(BalboaGS)
 )
 FILTER_OPTIONS = ["2 hours", "4 hours", "6 hours", "8 hours", "Continuous"]  # must match FILTER_OPTION_LABELS in balboa_gs.cpp
+# EXPERIMENTAL (untested): pump 2 on/off for tubs with a second pump
+BalboaPump2Switch = balboa_ns.class_(
+    "BalboaPump2Switch", switch.Switch, cg.Parented.template(BalboaGS)
+)
 BalboaLight = balboa_ns.class_(
     "BalboaLight", light.LightOutput, cg.Parented.template(BalboaGS)
 )
@@ -79,6 +83,8 @@ CONF_PUMP_SPEED = "pump_speed"
 CONF_WATER_TEMPERATURE_AGE = "water_temperature_age"
 CONF_STATUS_BITS = "status_bits"
 CONF_FILTER_SETTING = "filter_setting"
+CONF_PUMP2 = "pump2"                # EXPERIMENTAL, untested
+CONF_PUMP2_SWITCH = "pump2_switch"  # EXPERIMENTAL, untested
 
 # (yaml key, ButtonAction value in balboa_gs.h, icon)
 BUTTONS = (
@@ -89,6 +95,8 @@ BUTTONS = (
     ("pump_button", 4, "mdi:pump"),
     ("stop_button", 5, "mdi:close-octagon"),
     ("read_filter_button", 6, "mdi:air-filter"),
+    ("pump2_button", 8, "mdi:pump"),  # EXPERIMENTAL, untested
+    ("pump3_button", 9, "mdi:pump"),  # EXPERIMENTAL, untested (no pump 3 status bit is known)
     ("test_filter_button", 7, "mdi:test-tube"),
 )
 
@@ -123,6 +131,8 @@ _schema = {
         icon="mdi:heating-coil"
     ),
     cv.Optional(CONF_PUMP): binary_sensor.binary_sensor_schema(icon="mdi:pump"),
+    cv.Optional(CONF_PUMP2): binary_sensor.binary_sensor_schema(icon="mdi:pump"),
+    cv.Optional(CONF_PUMP2_SWITCH): switch.switch_schema(BalboaPump2Switch, icon="mdi:pump"),
     cv.Optional(CONF_LIGHTS): binary_sensor.binary_sensor_schema(
         icon="mdi:lightbulb-group"
     ),
@@ -187,6 +197,7 @@ async def to_code(config):
     for key, setter in (
         (CONF_HEATER, var.set_heater_binary_sensor),
         (CONF_PUMP, var.set_pump_binary_sensor),
+        (CONF_PUMP2, var.set_pump2_binary_sensor),
         (CONF_LIGHTS, var.set_lights_binary_sensor),
     ):
         if conf := config.get(key):
@@ -205,6 +216,11 @@ async def to_code(config):
         sel = await select.new_select(conf, options=PUMP_OPTIONS)
         await cg.register_parented(sel, var)
         cg.add(var.set_pump_select(sel))
+
+    if conf := config.get(CONF_PUMP2_SWITCH):
+        sw = await switch.new_switch(conf)
+        await cg.register_parented(sw, var)
+        cg.add(var.set_pump2_switch(sw))
 
     if conf := config.get(CONF_MODE):
         sel = await select.new_select(conf, options=MODE_OPTIONS)

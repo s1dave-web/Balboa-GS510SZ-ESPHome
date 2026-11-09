@@ -30,6 +30,7 @@ and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com
 | Pump Speed (Power), Heater Power | diagnostic | What the supply power says about the pump, and the measured heater power. |
 | Water Temperature Age, Boot Reason, Spa Powered On, WiFi Signal, Uptime | diagnostic | |
 | Read Filter Setting, Stop Command, Reset ESP | button (diagnostic) | |
+| Pump 2, Jets 2, Pump 2 / 3 buttons | binary sensor, switch, buttons | **Experimental, untested**: for 2- and 3-pump tubs, see [below](#experimental-2--3-pump-tubs). |
 | Display, Status Bits | text (optional debug) | Raw display text and status bits 29–38. Off in the example: Display changes every few seconds. |
 
 ## Hardware
@@ -167,9 +168,45 @@ Time to Heat.
   don't move it. *Next Filter Cycle* and *Filter Cycle* are predictions from that time and the cycle
   length.
 
+## Experimental: 2- and 3-pump tubs
+
+> ⚠️ **Untested.** This was written for the two-pump VL700S without a two-pump tub to try it on (the
+> author's tub has one pump). It compiles, and it only presses Pump 2 / 3 if you configure these options,
+> but it has never run on real hardware. Please report back (an issue on this repo) with what works.
+
+The press codes and the Pump 2 status bit come from MagnusPer's work on the VL700S:
+
+| Option | What it does |
+|---|---|
+| `pump2` | Binary sensor from panel bit 37 (Pump 2 running). |
+| `pump2_switch` | On/off switch. Presses Pump 2 until bit 37 matches (at most 3 presses, 2.5 s apart), and follows the panel if someone uses the button there. Assumes a **single-speed** pump 2. |
+| `pump2_button` | Presses Pump 2 once (code `010`). |
+| `pump3_button` | Presses Pump 3 once (code `111`). Press-only: no Pump 3 status bit is known. |
+
+```yaml
+balboa_gs:
+  # ...the rest of the example...
+  pump2:
+    name: "Pump 2"
+  pump2_switch:
+    name: "Jets 2"
+  pump3_button:
+    name: "Pump 3"
+```
+
+Notes:
+- **Check bit 37 first:** enable `status_bits` and press the Pump 2 button on the panel. `p2_37=1` should
+  appear while pump 2 runs. If it doesn't, `pump2` and `pump2_switch` won't work on your tub (the switch
+  gives up after 3 presses and says so in Last Action); the buttons may still.
+- **Two-speed pump 2:** if your pump 2 has Low/High, use `pump2_button` rather than the switch. The switch
+  would see "on" after the first press and stop at Low.
+- **Power check:** with `pump2` or `pump2_switch` configured, the pump-speed check from `power_entity` is
+  switched off, because the single-pump power bands no longer apply. Heater Power learning in the example
+  YAML also assumes one pump; set `heater_watts` by hand instead.
+
 ## Known limits
 
-- One pump (Pump 1) with Low/High. Pump 2 / 3 aren't exposed (the Pump 2 bit only shows in `status_bits`).
+- Tested with one pump (Pump 1, Low/High). Pump 2 / 3 support is experimental and untested (see above).
 - Celsius displays only.
 - Filter schedule assumes the 6 min / 12 h rule from the StrongSpa manual; it is unknown whether changing
   the filter setting restarts the controller's cycle clock.

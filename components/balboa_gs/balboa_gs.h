@@ -17,6 +17,7 @@
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/light/light_state.h"
 #include "esphome/components/select/select.h"
+#include "esphome/components/switch/switch.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 
@@ -62,6 +63,8 @@ enum ButtonAction : uint8_t {
   ACTION_STOP = 5,
   ACTION_READ_FILTER = 6,
   ACTION_TEST_FILTER = 7,
+  ACTION_PUMP2 = 8,  // EXPERIMENTAL, untested: tubs with a second / third pump button
+  ACTION_PUMP3 = 9,
 };
 
 class BalboaGS;
@@ -108,6 +111,13 @@ class BalboaPumpSelect : public select::Select, public Parented<BalboaGS> {
 };
 
 // Filter setting list (F2 / F4 / F6 / F8 / FC), read from and set through the panel's filter menu
+// EXPERIMENTAL (untested, no 2-pump tub available): Pump 2 on/off. Assumes a single-speed pump 2 whose
+// state the panel reports in bit 37; presses Pump 2 until the panel agrees, like the light.
+class BalboaPump2Switch : public switch_::Switch, public Parented<BalboaGS> {
+ protected:
+  void write_state(bool state) override;
+};
+
 class BalboaFilterSelect : public select::Select, public Parented<BalboaGS> {
  protected:
   void control(const std::string &value) override;
@@ -142,6 +152,11 @@ class BalboaGS : public Component {
   void set_last_action_text_sensor(text_sensor::TextSensor *s) { this->last_action_sensor_ = s; }
   void set_mode_select(BalboaModeSelect *s) { this->mode_select_ = s; }
   void set_pump_select(BalboaPumpSelect *s) { this->pump_select_ = s; }
+  // EXPERIMENTAL pump 2 / 3 (untested)
+  void set_pump2_binary_sensor(binary_sensor::BinarySensor *s) { this->pump2_sensor_ = s; }
+  void set_pump2_switch(BalboaPump2Switch *s) { this->pump2_switch_ = s; }
+  void command_pump2(bool on);
+  bool pump2_configured() const { return this->pump2_sensor_ != nullptr || this->pump2_switch_ != nullptr; }
   void set_water_age_sensor(sensor::Sensor *s) { this->water_age_sensor_ = s; }
   void set_status_bits_text_sensor(text_sensor::TextSensor *s) { this->status_bits_sensor_ = s; }
   void set_filter_select(BalboaFilterSelect *s) { this->filter_select_ = s; }
@@ -193,6 +208,8 @@ class BalboaGS : public Component {
   SpaMode mode_seen_since_(uint32_t since) const;
   bool mode_change_active_() const { return this->mode_step_ != MS_IDLE; }
   void process_pump_();
+  void process_pump2_();
+  bool pump2_is_on_() const { return this->pump2_on_ || (millis() - this->last_pump2_on_ms_) < 1500; }
   void sync_pump_assumed_();
   void finish_pump_(PumpSpeed result, bool ok);
   void on_power_(float watts);
@@ -273,6 +290,16 @@ class BalboaGS : public Component {
   uint32_t pump_settle_until_{0};
   int8_t lp_pump_speed_{-1};
   uint32_t last_pump_on_ms_{0};  // last frame with the pump bit on (off must last 1.5 s to count)
+
+  // ---- pump 2 (EXPERIMENTAL) ----
+  binary_sensor::BinarySensor *pump2_sensor_{nullptr};
+  BalboaPump2Switch *pump2_switch_{nullptr};
+  bool pump2_on_{false};            // panel bit 37
+  uint32_t last_pump2_on_ms_{0};
+  int8_t pump2_target_{-1};         // -1 = nothing in progress
+  uint8_t pump2_presses_{0};
+  uint32_t pump2_next_press_ms_{0};
+  int8_t lp_pump2_{-1}, lp_pump2_switch_{-1};
   bool pump_is_off_() const { return !this->pump1_on_ && (millis() - this->last_pump_on_ms_) >= 1500; }  // after a light command, don't sync the light entity from the panel yet
 
   // ---- filter setting read (Temp+, Pump 1 opens the filter menu, Pump 1 again exits) ----
