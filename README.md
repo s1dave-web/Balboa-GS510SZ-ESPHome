@@ -24,7 +24,7 @@ and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com
 | Filter Cycle Setting | select | 2 / 4 / 6 / 8 hours / Continuous. Read and set through the panel's filter menu. |
 | Heater, Pump | binary sensor | Straight from the panel bits. |
 | Filter Cycle, Next Filter Cycle | binary sensor, timestamp | Predicted from the spa's power-on time (see below). |
-| Time to Heat | sensor (h) | From water volume, temperature difference and heater power (measured if available). |
+| Time to Heat | sensor (h) | Hours to reach the Effective Target, from water volume, temperature difference and heater power (measured if available). Often 0 in Sleep. |
 | Effective Target | sensor | The set temperature, or set − 11 °C in Sleep mode. |
 | Last Action | text (diagnostic) | What the ESP last did and why, e.g. `#12 Mode -> Sleep done (1 cycles)`. |
 | Pump Speed (Power), Heater Power | diagnostic | What the supply power says about the pump, and the measured heater power. |

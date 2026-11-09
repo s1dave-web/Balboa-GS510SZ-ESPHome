@@ -257,8 +257,9 @@ text_sensor:
     entity_category: diagnostic
 
 sensor:
-  # Hours to heat from the current water temperature to the target, at full heater power
-  # (the measured heater power once seen, else heater_watts), times heater_efficiency.
+  # Hours to heat from the current water temperature to the effective target (the set temperature,
+  # or set minus ${sleep_drop} C in Sleep), at full heater power (the measured heater power once seen,
+  # else heater_watts), times heater_efficiency.
   # 4184 J per kg per degree, 1 L of water = 1 kg. 0 when already at or above target.
   - platform: template
     name: "Time to Heat"
@@ -268,8 +269,11 @@ sensor:
     update_interval: 60s
     lambda: |-
       const float water = id(water_temp).state;
-      const float target = id(target_temp).state;
+      float target = id(target_temp).state;
       if (std::isnan(water) || std::isnan(target)) return {};
+      // Same rule as Effective Target: Sleep (option 2) only holds set minus ${sleep_drop} C
+      auto idx = id(spa_mode).active_index();
+      if (idx.has_value() && *idx == 2) target -= ${sleep_drop};
       const float delta = target - water;
       if (delta <= 0) return 0.0f;
       // Measured heater power if the supply has seen it heating, else heater_watts
