@@ -7,7 +7,10 @@ substitutions:
   name: spa
   friendly_name: Hot Tub
   # ---- Time to Heat ----
-  water_litres: "920"            # tub water volume
+  # Water actually in the tub, not the brochure figure. StrongSpa lists every G-2 at 300 US gal / 1135 L
+  # (brim full); a measured heating run on this tub (3.0 kWh into the water for +3.0 C) works out at
+  # roughly 870-1000 L, so 920 is used here. See README "Sizing water_litres".
+  water_litres: "920"
   # Heater power. Used until the heater has been measured from power_entity (then the measured value is used).
   heater_watts: "1865"
   # Share of the heater power that ends up in the water (1.0 = all of it; lower it if estimates run short)

@@ -75,7 +75,7 @@ on this board with ESPHome 2026.10's native ESP8266 toolchain.
 
 | Substitution | Example | Used for |
 |---|---|---|
-| `water_litres` | `920` | Time to Heat |
+| `water_litres` | `920` | Time to Heat. Use the water you actually fill to, not the brochure capacity (see below). |
 | `heater_watts` | `1865` | Time to Heat, until the heater has been measured from `power_entity` |
 | `heater_efficiency` | `1.0` | Share of heater power that reaches the water. Lower it if real heating is slower than the estimate. |
 | `power_entity` | `sensor.hot_tub_plug_power` | Optional HA power sensor on the tub's supply (smart plug, CT clamp) |
@@ -83,6 +83,16 @@ on this board with ESPHome 2026.10's native ESP8266 toolchain.
 | `pump_low_watts` | `385` | Pump Low draw, subtracted to measure the heater |
 | `sleep_drop` | `11.0` | How far below the set temperature Sleep mode lets the water fall |
 | `filter_first_delay_s` | `360` | First filter cycle after power-on (6 min on this spa) |
+
+### Sizing `water_litres`
+
+Brochure capacities are usually brim-full: StrongSpa lists every
+[G-2 model](https://strongspas.com/product/the-g-2-collection/) at 300 US gal / 1135 L. What matters for
+Time to Heat is the water actually heated. On this tub a clean heating run went from 11.5 °C to 14.5 °C in
+1 h 44 min while the heater delivered about 3.0 kWh (supply power minus the pump), which is
+3.0 kWh × 3.6 MJ/kWh ÷ (4.184 kJ/kg·°C × 3.0 °C) ≈ 865 L. Cover heat loss pulls the true figure down a
+little and the pump's own heat pushes it up, so 920 L is used. To check yours: note the water temperature
+and the heater's kWh over a couple of hours of heating on Low with the cover on, and use the same sum.
 
 **No power sensor?** Remove `power_sensor:` from the `balboa_gs:` block, the `homeassistant` sensor
 (`tub_power`) and the `Heater Power` sensor. Pump speed then comes from press tracking alone and Time to
