@@ -6,6 +6,7 @@ and presses the buttons, and gives Home Assistant a proper thermostat, light, mo
 cycle control.
 
 Built on the protocol work in [MagnusPer/Balboa-GS510SZ](https://github.com/MagnusPer/Balboa-GS510SZ)
+and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com/s1dave-web/Balboa-GS510SZ)
 (see [Credits](#credits)). Tested on a StrongSpa G2 (GS510SZ + VL701S, 920 L, 13 A supply).
 
 > **Status:** working and in daily use on one tub. Other GS-series controllers and panels may differ —
@@ -31,6 +32,15 @@ Built on the protocol work in [MagnusPer/Balboa-GS510SZ](https://github.com/Magn
 | Read Filter Setting, Stop Command, Reset ESP | button (diagnostic) | |
 
 ## Hardware
+
+### Panel
+
+Written for the **VL701S**: the single-pump version of the VL700S, with five buttons — **Jets**, **Mode**,
+**Light**, **Warm** and **Cool** — around the 4-character display. One Jets button drives a two-speed pump
+(Off → Low → High → Off) and there is no separate circulation pump. The original library targets the
+two-pump VL700S; the bus and button codes are the same, only Pump 2 / Pump 3 go unused here.
+
+### Interface
 
 - Wemos D1 mini (ESP8266), powered from the panel cable's 5 V.
 - The OR-gate interface from MagnusPer's project between the D1 mini and the panel's data lines — see the
@@ -156,6 +166,8 @@ Time to Heat.
 - [MagnusPer/Balboa-GS510SZ](https://github.com/MagnusPer/Balboa-GS510SZ) — the original reverse
   engineering of the GS510SZ panel bus, the 7-segment table, the button codes, the OR-gate interface and
   PCB. This component's frame decoding and button injection are based on that library.
+- [s1dave-web/Balboa-GS510SZ](https://github.com/s1dave-web/Balboa-GS510SZ) — the single-pump (VL701S)
+  Arduino version this ESPHome component was converted from.
 - [NickB1/OpenSpa](https://github.com/NickB1/OpenSpa) and
   [The Internet of Spas](https://www.olivierhill.ca/archives/72-The-Internet-of-Spas.html), referenced by
   the original project.
