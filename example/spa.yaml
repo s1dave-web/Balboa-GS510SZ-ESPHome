@@ -1,0 +1,334 @@
+# Balboa GS510SZ hot tub controller (VL700S / VL701S panel) - ESPHome example
+# Board: Wemos D1 mini (ESP8266). Pins: D1=GPIO5 clock, D2=GPIO4 display data, D8=GPIO15 button data
+# Needs secrets.yaml with: wifi_ssid, wifi_password, ap_password, api_key
+# Tested on a StrongSpa G2 (920 L, 13 A supply). Adjust the substitutions below for your tub.
+
+substitutions:
+  name: spa
+  friendly_name: Hot Tub
+  # ---- Time to Heat ----
+  water_litres: "920"            # tub water volume
+  # Heater power. Used until the heater has been measured from power_entity (then the measured value is used).
+  heater_watts: "1865"
+  # Share of the heater power that ends up in the water (1.0 = all of it; lower it if estimates run short)
+  heater_efficiency: "1.0"
+  # ---- Tub supply power (optional, from HA) ----
+  # Checks the pump speed and measures the heater. Measured here: idle 5 W, Low 385 W, High 1920 W,
+  # Low + heater 2250 W. Between the two thresholds = High, below = Low, above = Low + heater.
+  power_entity: sensor.hot_tub_plug_power   # a power sensor in HA on the tub's supply (smart plug / CT clamp)
+  pump_high_min_w: "1000"
+  pump_high_max_w: "2100"
+  pump_low_watts: "385"          # pump on Low, subtracted from Low + heater to get the heater alone
+  # Sleep mode lets the water drop this far below the set temperature (StrongSpa manual: 11 C / 20 F)
+  sleep_drop: "11.0"
+  # First filter cycle starts this long after the spa is powered on (StrongSpa manual: 6 min)
+  filter_first_delay_s: "360"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: Balboa GS510SZ spa controller
+  on_boot:
+    priority: 600
+    then:
+      # The ESP is powered by the spa controller, so a power-on boot = the spa was just powered on.
+      # OTA updates, restarts and crashes are not power-ons and keep the saved power-on time.
+      - lambda: |-
+          const uint32_t r = ESP.getResetInfoPtr()->reason;
+          id(boot_power_on) = (r == REASON_DEFAULT_RST || r == REASON_EXT_SYS_RST);
+          // After a crash, add the exception details so it can be traced to the code
+          if (r == REASON_EXCEPTION_RST || r == REASON_SOFT_WDT_RST || r == REASON_WDT_RST) {
+            const rst_info *i = ESP.getResetInfoPtr();
+            char s[110];
+            snprintf(s, sizeof(s), "%s (cause %u, epc1 0x%08x, excvaddr 0x%08x)", ESP.getResetReason().c_str(),
+                     (unsigned) i->exccause, (unsigned) i->epc1, (unsigned) i->excvaddr);
+            id(boot_reason).publish_state(s);
+          } else {
+            id(boot_reason).publish_state(ESP.getResetReason().c_str());
+          }
+
+esp8266:
+  # Generic 1 MB layout: boots on any ESP8266. The d1_mini (4 MB) build did not boot on this board.
+  # D-pin names don't exist with this board setting, so GPIO numbers are used below.
+  board: esp01_1m
+  # Keep the last water temperature through power cuts, not just soft restarts
+  restore_from_flash: true
+
+external_components:
+  - source: github://s1dave-web/Balboa-GS510SZ-ESPHome@main
+    components: [balboa_gs]
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none        # same as WIFI_NONE_SLEEP in the Arduino sketch
+  # Tubs are often at the edge of Wi-Fi range, so reconnecting can take minutes. Start the fallback
+  # hotspot only after 10 min: AP + scanning while reconnecting crashed the ESP8266 here.
+  ap:
+    ssid: "Spa Fallback"
+    password: !secret ap_password
+    ap_timeout: 10min
+
+captive_portal:
+
+web_server:
+  port: 80
+
+balboa_gs:
+  id: spa_ctrl
+  power_sensor: tub_power
+  pump_high_min_power: ${pump_high_min_w}
+  pump_high_max_power: ${pump_high_max_w}
+  clock_pin: GPIO5                # RJ45 pin 6 (clock)
+  data_pin: GPIO4                 # RJ45 pin 5 (display data), through the OR-gate interface
+  button_pin: GPIO15               # RJ45 pin 3 (button data), through the OR-gate interface
+  min_target_temperature: 26
+  max_target_temperature: 40
+  learn_target_on_boot: true   # the original library also pressed Temp Up once to read the set temperature
+
+  climate:
+    name: "Temperature Control"
+  water_temperature:
+    name: "Water Temperature"
+    id: water_temp
+  target_temperature:
+    name: "Target Temperature"
+    id: target_temp
+  heater:
+    name: "Heater"
+  pump:
+    name: "Pump"
+    id: spa_pump
+    device_class: running
+  light:                       # replaces the Lights binary sensor and Lights button
+    name: "Lights"
+    icon: "mdi:lightbulb-group"
+  display:                     # raw display text; changes every few seconds, so kept internal (remove to debug)
+    name: "Display"
+    internal: true
+  last_action:
+    name: "Last Action"
+  mode:                        # Standard / Economy / Sleep; replaces the Mode and Temperature Up buttons
+    name: "Mode"
+    id: spa_mode
+  pump_speed:                  # Off / Low / High, tracked from presses, corrected from power_entity
+    name: "Pump Speed"
+  pump_power_check:            # what the supply power alone says: Off / Low / High / Low + heater (W at the change)
+    name: "Pump Speed (Power)"
+  water_temperature_age:       # seconds since the panel last showed a valid water temperature
+    name: "Water Temperature Age"
+  # status_bits:               # debug: raw panel bits 29..38 (bit 31 left out, it follows the display)
+  #   name: "Status Bits"
+
+  filter_setting:              # panel F2 / F4 / F6 / F8 / FC: Temp+, Pump 1 (menu shows FIL2...), Temp+ steps, Pump 1 stores
+    name: "Filter Cycle Setting"
+  read_filter_button:          # opens the filter menu, reads the setting, exits without changing it
+    name: "Read Filter Setting"
+    entity_category: diagnostic
+
+  stop_button:
+    name: "Stop Command"
+    entity_category: diagnostic
+
+## ---------------------------------------------------
+## Filter cycle schedule
+## Manual: first cycle 6 min after the spa is powered on, the second 12 h after that, repeating.
+## The power-on time is caught from the ESP's own power-on (same supply) and kept in flash.
+## ---------------------------------------------------
+globals:
+  - id: heater_w_measured      # running average of the measured heater power (0 = not measured yet)
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: heater_w_saved         # the same, kept in flash; only rewritten when it moves 25 W or more
+    type: float
+    restore_value: yes
+    initial_value: "0"
+  - id: pump_low_w_measured
+    type: float
+    restore_value: no
+    initial_value: "${pump_low_watts}"
+  - id: spa_power_on_epoch     # UTC seconds; 0 = not caught yet
+    type: uint32_t
+    restore_value: yes
+    initial_value: "0"
+  - id: boot_power_on
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: power_on_recorded
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - lambda: |-
+          auto now = id(ha_time).now();
+          if (id(boot_power_on) && !id(power_on_recorded) && now.is_valid()) {
+            id(spa_power_on_epoch) = (uint32_t) now.timestamp - millis() / 1000;
+            id(power_on_recorded) = true;
+            ESP_LOGI("filter", "Spa power-on caught: %u s ago", (unsigned) (millis() / 1000));
+          }
+      - script.execute: update_filter_schedule
+
+interval:
+  - interval: 30s
+    then:
+      - script.execute: update_filter_schedule
+
+script:
+  - id: update_filter_schedule
+    mode: queued
+    then:
+      - lambda: |-
+          const uint32_t p = id(spa_power_on_epoch);
+          auto now = id(ha_time).now();
+          if (p == 0 || !now.is_valid()) return;
+          auto iso = [](uint32_t t) { return ESPTime::from_epoch_utc(t).strftime("%Y-%m-%dT%H:%M:%S+00:00"); };
+
+          const int hrs = id(spa_ctrl).filter_hours();          // 0 = not read yet: assume the F2 default
+          const uint32_t dur = (uint32_t) (hrs > 0 ? hrs : 2) * 3600;
+          const uint32_t first = p + ${filter_first_delay_s};
+          const uint32_t period = 12 * 3600;
+          const uint32_t t = (uint32_t) now.timestamp;
+
+          bool running;
+          uint32_t next;
+          if (t < first) {
+            running = false;
+            next = first;
+          } else {
+            const uint32_t since = (t - first) % period;
+            running = hrs >= 24 || since < dur;
+            next = t + (period - since);
+          }
+          if (!id(filter_cycle).has_state() || id(filter_cycle).state != running) id(filter_cycle).publish_state(running);
+          const std::string on_s = iso(p), next_s = iso(next);
+          if (id(spa_powered_on).state != on_s) id(spa_powered_on).publish_state(on_s);
+          if (id(next_filter_cycle).state != next_s) id(next_filter_cycle).publish_state(next_s);
+
+binary_sensor:
+  - platform: template
+    id: filter_cycle
+    name: "Filter Cycle"
+    icon: mdi:air-filter
+    device_class: running
+
+text_sensor:
+  - platform: template
+    id: spa_powered_on
+    name: "Spa Powered On"
+    icon: mdi:power-plug
+    device_class: timestamp
+    entity_category: diagnostic
+  - platform: template
+    id: next_filter_cycle
+    name: "Next Filter Cycle"
+    icon: mdi:air-filter
+    device_class: timestamp
+  - platform: template
+    id: boot_reason
+    name: "Boot Reason"
+    icon: mdi:restart
+    entity_category: diagnostic
+
+sensor:
+  # Hours to heat from the current water temperature to the target, at full heater power
+  # (the measured heater power once seen, else heater_watts), times heater_efficiency.
+  # 4184 J per kg per degree, 1 L of water = 1 kg. 0 when already at or above target.
+  - platform: template
+    name: "Time to Heat"
+    icon: mdi:timer-sand
+    unit_of_measurement: "h"
+    accuracy_decimals: 2
+    update_interval: 60s
+    lambda: |-
+      const float water = id(water_temp).state;
+      const float target = id(target_temp).state;
+      if (std::isnan(water) || std::isnan(target)) return {};
+      const float delta = target - water;
+      if (delta <= 0) return 0.0f;
+      // Measured heater power if the supply has seen it heating, else heater_watts
+      float watts = id(heater_w_measured) > 0.0f ? id(heater_w_measured)
+                  : id(heater_w_saved) > 0.0f ? id(heater_w_saved) : ${heater_watts};
+      return (${water_litres} * 4184.0f * delta) / (watts * ${heater_efficiency} * 3600.0f);
+
+  # What the spa actually heats to: the set temperature, or set minus ${sleep_drop} C in Sleep.
+  # Sleep and Economy only heat during filter cycles, so this is the limit, not a promise.
+  - platform: template
+    name: "Effective Target"
+    icon: mdi:thermometer-chevron-down
+    unit_of_measurement: "°C"
+    device_class: temperature
+    accuracy_decimals: 1
+    update_interval: 10s
+    lambda: |-
+      const float target = id(target_temp).state;
+      auto idx = id(spa_mode).active_index();
+      if (std::isnan(target) || !idx.has_value()) return {};
+      // Options: 0 = Standard, 1 = Economy, 2 = Sleep
+      return (*idx == 2) ? target - ${sleep_drop} : target;
+
+  # Tub supply power, read from HA (not sent back)
+  - platform: homeassistant
+    id: tub_power
+    entity_id: ${power_entity}
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(spa_pump).state) return;
+          if (x >= 100.0f && x < ${pump_high_min_w}) {
+            // Pump on Low, heater off: keep the pump's own draw up to date
+            id(pump_low_w_measured) = id(pump_low_w_measured) * 0.9f + x * 0.1f;
+          } else if (x > ${pump_high_max_w}) {
+            // Low + heater: the heater alone is the difference
+            const float h = x - id(pump_low_w_measured);
+            if (h < 500.0f || h > 6000.0f) return;
+            float &m = id(heater_w_measured);
+            if (m <= 0.0f) m = id(heater_w_saved) > 0.0f ? id(heater_w_saved) : h;
+            m = m * 0.9f + h * 0.1f;
+            if (std::fabs(m - id(heater_w_saved)) >= 25.0f) id(heater_w_saved) = m;  // spare the flash
+          }
+
+  # Heater power used by Time to Heat: measured when available, else heater_watts
+  - platform: template
+    id: heater_power
+    name: "Heater Power"
+    icon: mdi:heating-coil
+    unit_of_measurement: "W"
+    device_class: power
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      if (id(heater_w_measured) > 0.0f) return id(heater_w_measured);
+      if (id(heater_w_saved) > 0.0f) return id(heater_w_saved);
+      return ${heater_watts};
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+
+button:
+  - platform: restart
+    name: "Reset ESP"
+    entity_category: diagnostic
