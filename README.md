@@ -10,7 +10,7 @@ and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com
 (see [Credits](#credits)). Tested on a StrongSpa G2 (GS510SZ + VL701S, 920 L, 13 A supply).
 
 > **Status:** working and in daily use on one tub. Other GS-series controllers and panels may differ —
-> the raw `display` and `status_bits` sensors are there to help you check yours.
+> the optional `display` and `status_bits` debug sensors (see the example) help you check yours.
 
 ## What you get in Home Assistant
 
@@ -30,6 +30,7 @@ and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com
 | Pump Speed (Power), Heater Power | diagnostic | What the supply power says about the pump, and the measured heater power. |
 | Water Temperature Age, Boot Reason, Spa Powered On, WiFi Signal, Uptime | diagnostic | |
 | Read Filter Setting, Stop Command, Reset ESP | button (diagnostic) | |
+| Display, Status Bits | text (optional debug) | Raw display text and status bits 29–38. Off in the example: Display changes every few seconds. |
 
 ## Hardware
 
@@ -55,8 +56,12 @@ two-pump VL700S; the bus and button codes are the same, only Pump 2 / Pump 3 go 
 | 6 | Clock | D1 / GPIO5 |
 | 7 | 5 V | 5V |
 
-**Use `board: esp01_1m`** (and GPIO numbers rather than D-pin names). A `d1_mini` (4 MB) build did not boot
-on this board with ESPHome 2026.10's native ESP8266 toolchain.
+Pinout as measured in MagnusPer's [RJ45 pins](https://github.com/MagnusPer/Balboa-GS510SZ#rj45-pins)
+section. Don't connect pins 1 and 2: they carry an ~18 V peak-to-peak 50 Hz signal of unknown purpose.
+
+**Use `board: esp01_1m`** (and GPIO numbers rather than D-pin names) if a `d1_mini` build won't boot: a
+full `d1_mini` image written with ESPHome Web did not boot on this tub's board, while `esp01_1m` works on
+any ESP8266.
 
 ## Installing
 
@@ -157,7 +162,7 @@ Time to Heat.
   exits. The ESP reads the menu after every press, stops if a temperature appears or the pump changes,
   and only presses Pump 1 once the display shows the wanted setting.
 - **Schedule:** per the manual, the first cycle starts 6 minutes after the spa is powered on and the next
-  12 hours after that. The D1 mini is powered by the controller, so a real power-on boot (reset reason
+  12 hours after that (the 6-minute start was confirmed on this tub: the pump started on time). The D1 mini is powered by the controller, so a real power-on boot (reset reason
   *Power on*) means the spa was just powered on; that time is kept in flash. OTA updates and restarts
   don't move it. *Next Filter Cycle* and *Filter Cycle* are predictions from that time and the cycle
   length.
