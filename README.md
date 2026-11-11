@@ -16,13 +16,15 @@ and its single-pump adaptation in [s1dave-web/Balboa-GS510SZ](https://github.com
 
 | Entity | Type | Notes |
 |---|---|---|
-| Temperature Control | climate | Heat only. Action shows **Heating / Idle** from the panel's heater bit. Setting a target presses Warm/Cool for you. |
+| Temperature Control | climate | Heat only. Action shows **Heating / Idle** from the decoded heater status (Pending counts as Idle). Setting a target presses Warm/Cool for you. |
 | Water Temperature / Target Temperature | sensor | Read from the display. The last water temperature is kept in flash, so a restart doesn't blank it. |
 | Lights | light | On/off. Only presses Light when the panel is in the other state; re-syncs if someone uses the panel. |
 | Mode | select | Standard / Economy / Sleep. Read from the display, changed with Warm then Mode (see below). |
 | Pump Speed | select | Off / Low / High. Tracked from presses, corrected from a power sensor if you have one. |
 | Filter Cycle Setting | select | 2 / 4 / 6 / 8 hours / Continuous. Read and set through the panel's filter menu. |
-| Heater, Pump | binary sensor | Straight from the panel bits. |
+| Heater | binary sensor | On only while actually heating: the heater bit held steady for 10 s. Not on while the panel blinks it. |
+| Heater Status | text | **Heating** / **Pending** / **Off**. Pending = heat wanted, panel blinking the heat icon, heater not running yet (see the bit table). |
+| Pump | binary sensor | Straight from the panel bit. |
 | Filter Cycle, Next Filter Cycle | binary sensor, timestamp | Predicted from the spa's power-on time (see below). |
 | Time to Heat | sensor (h) | Hours to reach the Effective Target, from water volume, temperature difference and heater power (measured if available). Often 0 in Sleep. |
 | Effective Target | sensor | The set temperature, or set − 11 °C in Sleep mode. |
@@ -117,7 +119,7 @@ read on pulses 0–38; the panel (or the ESP) drives the button line on pulses 3
 | 28 | Set temperature is being shown (Warm/Cool pressed) |
 | 29, 30, 32, 33, 34 | Always 0 here |
 | 31 | Follows the display contents (not the mode, despite older notes) |
-| 35 | Heater on (flashes while heat is wanted but waiting) |
+| 35 | Heater on. **Blinks while heat is wanted but waiting**: checked against supply power, on-spells of up to ~9 s and off-gaps up to ~12 s with no heater draw, before a steady on when it really starts. Decoded as steady on 10 s = Heating, steady off 15 s = Off, otherwise Pending. |
 | 36 | Pump 1 on — **the same for Low and High**, there is no speed bit |
 | 37 | Pump 2 |
 | 38 | Light |

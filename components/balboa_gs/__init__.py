@@ -73,6 +73,7 @@ CONF_CLIMATE = "climate"
 CONF_WATER_TEMPERATURE = "water_temperature"
 CONF_TARGET_TEMPERATURE = "target_temperature"
 CONF_HEATER = "heater"
+CONF_HEATER_STATUS = "heater_status"
 CONF_PUMP = "pump"
 CONF_LIGHTS = "lights"
 CONF_DISPLAY = "display"
@@ -130,6 +131,7 @@ _schema = {
     cv.Optional(CONF_HEATER): binary_sensor.binary_sensor_schema(
         icon="mdi:heating-coil"
     ),
+    cv.Optional(CONF_HEATER_STATUS): text_sensor.text_sensor_schema(icon="mdi:heating-coil"),
     cv.Optional(CONF_PUMP): binary_sensor.binary_sensor_schema(icon="mdi:pump"),
     cv.Optional(CONF_PUMP2): binary_sensor.binary_sensor_schema(icon="mdi:pump"),
     cv.Optional(CONF_PUMP2_SWITCH): switch.switch_schema(BalboaPump2Switch, icon="mdi:pump"),
@@ -202,6 +204,9 @@ async def to_code(config):
     ):
         if conf := config.get(key):
             cg.add(setter(await binary_sensor.new_binary_sensor(conf)))
+
+    if conf := config.get(CONF_HEATER_STATUS):
+        cg.add(var.set_heater_status_text_sensor(await text_sensor.new_text_sensor(conf)))
 
     if conf := config.get(CONF_DISPLAY):
         cg.add(var.set_display_text_sensor(await text_sensor.new_text_sensor(conf)))

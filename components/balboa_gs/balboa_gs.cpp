@@ -51,6 +51,14 @@ static const char *const FILTER_OPTION_LABELS[FILTER_OPTIONS] = {"2 hours", "4 h
 static const int FILTER_OPTION_HOURS[FILTER_OPTIONS] = {2, 4, 6, 8, 24};     // after a change, don't re-sync the list from the panel yet
 static const uint8_t PUMP_OFF_MAX_PRESSES = 2;   // the tub can run Low itself and refuse Off; never cycle on to High
 
+// Heater decode (bit 35). While heat is wanted but the heater isn't running, the panel blinks the heat
+// indicator, so the bit toggles. Seen on this tub during frost protection, checked against supply power:
+// blinking on-spells up to ~9 s and off-gaps up to ~12 s with the heater drawing nothing, while real
+// heating is a steady on. So: on for 10 s without a change = Heating, off for 15 s = Off, anything
+// in between = Pending. Real heating is reported 10 s late; the heater going off is reported at once.
+static const uint32_t HEATER_ON_STEADY_MS = 10000;
+static const uint32_t HEATER_OFF_STEADY_MS = 15000;
+
 // 3-bit codes sent on pulses 39, 40, 41 (MSB first), indexed by ButtonId
 static const uint8_t BUTTON_CODES[7] = {0b001, 0b100, 0b101, 0b011, 0b110, 0b010, 0b111};
 
@@ -285,7 +293,15 @@ void BalboaGS::decode_frame_() {
   }
 
   this->display_button_ = buffer_[28] == 1;
-  this->heater_on_ = buffer_[35] == 1;
+  const bool heat_bit = buffer_[35] == 1;
+  if (!this->heater_bit_seen_) {
+    // First frame: treat the bit as already steady, so a boot doesn't show Pending for 10-15 s
+    this->heater_bit_change_ms_ = millis() - HEATER_OFF_STEADY_MS;
+    this->heater_bit_seen_ = true;
+  } else if (heat_bit != this->heater_on_) {
+    this->heater_bit_change_ms_ = millis();
+  }
+  this->heater_on_ = heat_bit;
   this->pump1_on_ = buffer_[36] == 1;
   if (this->pump1_on_) this->last_pump_on_ms_ = millis();
   this->pump2_on_ = buffer_[37] == 1;
@@ -1059,8 +1075,33 @@ static void pub_bool(binary_sensor::BinarySensor *s, int8_t &cache, bool v) {
   }
 }
 
+const char *BalboaGS::heater_status_name(HeaterStatus s) {
+  switch (s) {
+    case HEATER_HEATING: return "Heating";
+    case HEATER_PENDING: return "Pending";
+    default: return "Off";
+  }
+}
+
+// Classify bit 35 by how long it has held its current value (see HEATER_ON_STEADY_MS)
+void BalboaGS::update_heater_status_() {
+  const uint32_t steady_ms = millis() - this->heater_bit_change_ms_;
+  HeaterStatus s = HEATER_PENDING;
+  if (this->heater_on_ && steady_ms >= HEATER_ON_STEADY_MS) {
+    s = HEATER_HEATING;
+  } else if (!this->heater_on_ && steady_ms >= HEATER_OFF_STEADY_MS) {
+    s = HEATER_OFF;
+  }
+  if (s != this->heater_status_) {
+    ESP_LOGI(TAG, "Heater: %s -> %s", heater_status_name(this->heater_status_), heater_status_name(s));
+    this->heater_status_ = s;
+  }
+}
+
 void BalboaGS::publish_states_() {
   if (!this->have_frame_) return;
+
+  this->update_heater_status_();
 
   if (this->filter_select_ != nullptr && !this->filter_read_active_() && this->lp_filter_hours_ != this->filter_hours_) {
     const int idx = filter_index_(this->filter_hours_);
@@ -1093,7 +1134,11 @@ void BalboaGS::publish_states_() {
     this->display_sensor_->publish_state(std::string(this->text_));
     snprintf(this->lp_display_, sizeof(this->lp_display_), "%s", this->text_);
   }
-  pub_bool(this->heater_sensor_, this->lp_heater_, this->heater_on_);
+  pub_bool(this->heater_sensor_, this->lp_heater_, this->heater_status_ == HEATER_HEATING);
+  if (this->heater_status_sensor_ != nullptr && (int8_t) this->heater_status_ != this->lp_heater_status_) {
+    this->heater_status_sensor_->publish_state(std::string(heater_status_name(this->heater_status_)));
+    this->lp_heater_status_ = (int8_t) this->heater_status_;
+  }
   pub_bool(this->pump_sensor_, this->lp_pump_, this->pump1_on_);
   pub_bool(this->pump2_sensor_, this->lp_pump2_, this->pump2_is_on_());
   // Keep the Pump 2 switch matching the panel (panel button, or a press that didn't take)
@@ -1141,7 +1186,8 @@ void BalboaGS::publish_states_() {
   if (this->climate_ != nullptr) {
     const float cur = water_ok ? this->water_c_ : this->climate_->current_temperature;
     const float tgt = target_ok ? this->target_c_ : this->climate_->target_temperature;
-    const auto action = this->heater_on_ ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE;
+    const auto action =
+        this->heater_status_ == HEATER_HEATING ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE;
     auto differs = [](float a, float b) { return std::isnan(a) != std::isnan(b) || (!std::isnan(a) && a != b); };
     if (this->climate_->mode != climate::CLIMATE_MODE_HEAT || this->climate_->action != action ||
         differs(cur, this->climate_->current_temperature) || differs(tgt, this->climate_->target_temperature)) {
@@ -1249,7 +1295,7 @@ void BalboaLight::write_state(light::LightState *state) {
 climate::ClimateTraits BalboaClimate::traits() {
   auto traits = climate::ClimateTraits();
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
-  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);  // Heating / Idle from the panel's heater bit
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);  // Heating / Idle from the decoded heater status
   traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);
   traits.set_visual_min_temperature(this->parent_->get_min_target());
   traits.set_visual_max_temperature(this->parent_->get_max_target());

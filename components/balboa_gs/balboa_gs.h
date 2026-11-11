@@ -53,6 +53,14 @@ enum PumpSpeed : int8_t {
   PUMP_HIGH = 2,
 };
 
+// Heater as decoded from panel bit 35. The panel blinks its heat indicator (so the bit toggles every few
+// seconds) while heat is wanted but the heater is not running yet; steady on = actually heating.
+enum HeaterStatus : uint8_t {
+  HEATER_OFF = 0,
+  HEATER_PENDING = 1,
+  HEATER_HEATING = 2,
+};
+
 // Actions for BalboaButton
 enum ButtonAction : uint8_t {
   ACTION_MODE = 0,
@@ -145,6 +153,7 @@ class BalboaGS : public Component {
   void set_water_temperature_sensor(sensor::Sensor *s) { this->water_sensor_ = s; }
   void set_target_temperature_sensor(sensor::Sensor *s) { this->target_sensor_ = s; }
   void set_heater_binary_sensor(binary_sensor::BinarySensor *s) { this->heater_sensor_ = s; }
+  void set_heater_status_text_sensor(text_sensor::TextSensor *s) { this->heater_status_sensor_ = s; }
   void set_pump_binary_sensor(binary_sensor::BinarySensor *s) { this->pump_sensor_ = s; }
   void set_lights_binary_sensor(binary_sensor::BinarySensor *s) { this->lights_sensor_ = s; }
   void set_display_text_sensor(text_sensor::TextSensor *s) { this->display_sensor_ = s; }
@@ -196,6 +205,8 @@ class BalboaGS : public Component {
 
   void decode_frame_();
   void publish_states_();
+  void update_heater_status_();
+  static const char *heater_status_name(HeaterStatus s);
   void process_temp_presses_();
   void learn_target_();
   void sync_light_();
@@ -234,6 +245,7 @@ class BalboaGS : public Component {
   climate::Climate *climate_{nullptr};
   sensor::Sensor *water_sensor_{nullptr}, *target_sensor_{nullptr};
   binary_sensor::BinarySensor *heater_sensor_{nullptr}, *pump_sensor_{nullptr}, *lights_sensor_{nullptr};
+  text_sensor::TextSensor *heater_status_sensor_{nullptr};
   text_sensor::TextSensor *display_sensor_{nullptr};
   BalboaLight *light_output_{nullptr};
   text_sensor::TextSensor *last_action_sensor_{nullptr};
@@ -246,7 +258,10 @@ class BalboaGS : public Component {
   // ---- decoded panel state (main loop only) ----
   bool have_frame_{false};
   bool display_button_{false};  // panel is showing the SET temperature
-  bool heater_on_{false}, pump1_on_{false}, light_on_{false};
+  bool heater_on_{false}, pump1_on_{false}, light_on_{false};  // heater_on_ = raw bit 35 (blinks while pending)
+  bool heater_bit_seen_{false};               // first frame decoded (its heater bit counts as already steady)
+  uint32_t heater_bit_change_ms_{0};          // when bit 35 last changed
+  HeaterStatus heater_status_{HEATER_OFF};    // decoded from bit 35's timing, see update_heater_status_()
   char text_[8]{" "};
   float water_c_{NAN}, target_c_{NAN};
   bool target_known_{false};
@@ -324,6 +339,7 @@ class BalboaGS : public Component {
   // ---- last published values (avoid repeating identical states) ----
   float lp_water_{NAN}, lp_target_{NAN};
   int8_t lp_heater_{-1}, lp_pump_{-1}, lp_light_{-1};
+  int8_t lp_heater_status_{-1};
   int32_t lp_water_age_{-1};
   int32_t lp_status_bits_{-1};
   char lp_display_[8]{"\x01"};
