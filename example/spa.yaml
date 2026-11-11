@@ -115,8 +115,10 @@ balboa_gs:
   target_temperature:
     name: "Target Temperature"
     id: target_temp
-  heater:
+  heater:                      # on only while actually heating (steady panel bit), not while the icon blinks
     name: "Heater"
+  heater_status:               # Heating / Pending (heat wanted, panel blinking, heater not running yet) / Off
+    name: "Heater Status"
   pump:
     name: "Pump"
     id: spa_pump
